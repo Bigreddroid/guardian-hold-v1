@@ -17,6 +17,10 @@ class PriceMatchChecker:
         listed, checkout = ctx.get("listed_price"), ctx.get("checkout_price")
         if listed is None or checkout is None:
             return CheckResult(self.name, "unknown", "marketplace", detail="price data missing")
+        lc, cc = ctx.get("listed_currency"), ctx.get("checkout_currency")
+        if lc and cc and str(lc).upper() != str(cc).upper():
+            return CheckResult(self.name, "fail", "marketplace",
+                               detail=f"listed currency {lc}, checkout currency {cc}")
         try:
             ok = Decimal(str(listed)) == Decimal(str(checkout))
         except InvalidOperation:

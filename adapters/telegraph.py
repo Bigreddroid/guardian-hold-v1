@@ -50,7 +50,7 @@ class FakeTelegraph:
     """Test double and demo stand-in. `script` maps intent -> payload dict, e.g.
     {"ok": True}. `prices` optionally maps intent -> price; otherwise `price`."""
 
-    label = "simulated Telegraph (no wallet configured)"
+    label = "simulated Telegraph (live adapter arrives after Nov 1)"
 
     def __init__(self, script: dict, price: Decimal = Decimal("0.01"), prices: Optional[dict] = None,
                  network: str = "testnet (simulated)"):

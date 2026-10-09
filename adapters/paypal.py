@@ -82,16 +82,13 @@ class PayPalClient:
             self._token_expires_at = self.clock() + int(data.get("expires_in", _DEFAULT_TOKEN_TTL)) - _TOKEN_SKEW
         return self._token
 
-    def _call(self, method: str, path: str, payload: Optional[dict] = None, request_id: Optional[str] = None,
-              body: bool = True) -> dict:
-        data = json.dumps(payload if payload is not None else {}).encode() if body else None
+    def _call(self, method: str, path: str, payload: Optional[dict] = None, request_id: Optional[str] = None) -> dict:
+        data = None if method == "GET" else json.dumps(payload if payload is not None else {}).encode()
         request_id = request_id or uuid.uuid4().hex
         for attempt in (1, 2):
-            headers = {
-                "Authorization": f"Bearer {self._auth()}",
-                "Content-Type": "application/json",
-                "PayPal-Request-Id": request_id,
-            }
+            headers = {"Authorization": f"Bearer {self._auth()}", "PayPal-Request-Id": request_id}
+            if data is not None:
+                headers["Content-Type"] = "application/json"
             try:
                 return self.transport(method, f"{self.base_url}{path}", headers, data)
             except PayPalError as exc:
@@ -120,7 +117,10 @@ class PayPalClient:
         return self._call("POST", "/v2/checkout/orders", payload)
 
     def get_order(self, order_id: str) -> dict:
-        return self._call("GET", f"/v2/checkout/orders/{order_id}", payload=None, request_id=None, body=False)
+        return self._call("GET", f"/v2/checkout/orders/{order_id}")
+
+    def get_authorization(self, authorization_id: str) -> dict:
+        return self._call("GET", f"/v2/payments/authorizations/{authorization_id}")
 
     def authorize_order(self, order_id: str) -> dict:
         return self._call("POST", f"/v2/checkout/orders/{order_id}/authorize",

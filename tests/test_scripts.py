@@ -89,6 +89,9 @@ class FakeSandbox:
         self.calls.append(("void", aid))
         return {}
 
+    def get_authorization(self, aid):
+        return {"id": aid, "status": "VOIDED"}
+
 
 class SandboxSmokeTests(unittest.TestCase):
     def test_full_run_writes_evidence(self):
