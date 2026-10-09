@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import html
 import itertools
+import json
 import os
 import urllib.parse
 from datetime import date, timedelta
@@ -16,8 +17,11 @@ from decimal import Decimal
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from adapters.paypal import PayPalClient, PayPalError, approve_link
+from adapters.telegraph import FakeTelegraph
+from agent.verify import verify_purchase
 from demo.catalog import SELLERS
 from demo.sim_paypal import SimulatedPayPal
+from desk.flow import DESK_INTENTS, build_desk
 from guardian import Guardian, Mandate, verify
 from guardian.config import Config
 from hold.ai_review import AIPageChecker
@@ -26,6 +30,15 @@ from hold.flow import HoldFlow, PriceMatchChecker, SellerIdentityChecker, Shipme
 REQUIRED = ("price_match", "seller_identity", "shipment")
 MAX_SPEND = Decimal("600.00")
 MAX_ORDERS = 50  # one shared demo instance: keep memory bounded
+MAX_BODY = 64_000
+DESK_BUDGET = Decimal("0.15")
+DESK_SCENARIOS = {
+    "clean": ("Meridian Grain Trading Ltd", {i: {"ok": True} for i in DESK_INTENTS}),
+    "sanctioned": ("Blue Harbor Commodities FZE", {
+        **{i: {"ok": True} for i in DESK_INTENTS},
+        "SANCTIONS_SCREENING_MATCH": {"ok": False, "detail": "name matches a sanctions list entry (simulated)"},
+    }),
+}
 CURRENCY = "USD"
 e = html.escape
 
@@ -42,9 +55,11 @@ class DemoApp:
         self.flow = HoldFlow(guardian, paypal)
         self.orders = {}
         self._keys = itertools.count(1)
+        self.desk_runs = []
+        self.reviewer = reviewer
 
     # ---- routing -------------------------------------------------------
-    def handle(self, method: str, path: str, query: dict, form: dict):
+    def handle(self, method: str, path: str, query: dict, form: dict, body: bytes = b""):
         parts = [p for p in path.split("/") if p]
         try:
             if method == "GET" and parts == ["healthz"]:
@@ -59,6 +74,12 @@ class DemoApp:
                 return self._return(query.get("seller", ""), query.get("token", ""))
             if method == "POST" and len(parts) == 2 and parts[0] == "ship" and parts[1] in self.orders:
                 return self._ship(parts[1])
+            if method == "POST" and parts == ["api", "verify"]:
+                return self._api_verify(body)
+            if method == "GET" and parts == ["desk"]:
+                return self._page("Counterparty Desk: spend panel", self._desk())
+            if method == "POST" and len(parts) == 2 and parts[0] == "desk" and parts[1] in DESK_SCENARIOS:
+                return self._desk_run(parts[1])
         except PayPalError as exc:
             return self._page("PayPal error", f"<p class=bad>PayPal returned {e(str(exc))}</p>"
                               f"<p><a href='/'>Back to dashboard</a></p>", status=502)
@@ -113,6 +134,59 @@ class DemoApp:
             authorized_amount=o["authorized"], currency=o["currency"])
         o["history"].append({"verdict": verdict, "outcome": outcome, "action": action})
 
+    # ---- agent API -----------------------------------------------------
+    def _api_verify(self, body: bytes):
+        def reply(status, payload):
+            return status, {"Content-Type": "application/json"}, json.dumps(payload, indent=2).encode()
+        if len(body) > MAX_BODY:
+            return reply(413, {"error": "request body too large"})
+        try:
+            req = json.loads(body or b"{}")
+            result = verify_purchase(req.get("listing") or {}, req.get("checkout") or {},
+                                     reviewer=self.reviewer, signing_key=self.signing_key)
+        except (ValueError, AttributeError) as exc:
+            return reply(400, {"error": str(exc)})
+        return reply(200, result)
+
+    # ---- Telegraph desk -----------------------------------------------------
+    def _desk_run(self, scenario: str):
+        name, script = DESK_SCENARIOS[scenario]
+        tg = FakeTelegraph(script, prices=dict(DESK_INTENTS))
+        mandate = Mandate(f"desk_{scenario}", name, Decimal("0"), CURRENCY,
+                          (date.today() + timedelta(days=30)).isoformat(),
+                          tuple(i.lower() for i in DESK_INTENTS), check_budget=DESK_BUDGET)
+        verdict = build_desk(tg, self.signing_key).run(mandate, {})
+        self.desk_runs.append({"name": name, "verdict": verdict, "label": tg.label})
+        del self.desk_runs[:-MAX_ORDERS]
+        return 303, {"Location": "/desk"}, b""
+
+    def _desk(self) -> str:
+        full = sum(DESK_INTENTS.values(), Decimal("0"))
+        buttons = "".join(
+            f"<form method=post action='/desk/{k}' style='display:inline'><button>Screen {e(v[0])}</button></form> "
+            for k, v in DESK_SCENARIOS.items())
+        cards = []
+        for run in reversed(self.desk_runs):
+            v = run["verdict"]
+            rows = "".join(
+                f"<tr><td>{e(c.name.upper())}</td><td class={e(c.result)}>{e(c.result)}</td>"
+                f"<td>{e(c.source.removeprefix('telegraph:'))}</td><td>{c.cost}</td>"
+                f"<td><code>{e(c.receipt or '')}</code></td><td>{e(c.network)}</td><td>{e(c.detail)}</td></tr>"
+                for c in v.checks)
+            saved = full - v.total_cost
+            cards.append(
+                f"<div class=card><h3>{e(run['name'])} · <span class={e(v.decision)}>{e(v.decision.upper())}</span></h3>"
+                f"<p class=muted>{e(run['label'])} · spent {v.total_cost} of {DESK_BUDGET} budget"
+                + (f" · {saved} not spent because screening stopped at the first hard fail" if saved > 0 else "")
+                + "</p>"
+                f"<div class=scroll><table><tr><th>request</th><th>result</th><th>miner</th><th>amount</th><th>tx hash</th>"
+                f"<th>network</th><th>detail</th></tr>{rows}</table></div>"
+                f"<ul>{''.join(f'<li>{e(r)}</li>' for r in v.reasons)}</ul></div>")
+        return (f"<p><a href='/'>&larr; HOLD dashboard</a></p>"
+                f"<p>Screen a counterparty by buying checks through Telegraph, cheapest first, "
+                f"stopping at the first hard fail. Check budget: {DESK_BUDGET} USD.</p><p>{buttons}</p>"
+                + ("".join(cards) or "<p class=muted>No screenings yet.</p>"))
+
     # ---- views ---------------------------------------------------------
     def _store(self, seller: str) -> str:
         s = SELLERS[seller]
@@ -126,12 +200,14 @@ class DemoApp:
         stores = "".join(f"<a class=btn href='/store/{k}'>{e(v['name'])}</a> " for k, v in SELLERS.items())
         rows = "".join(self._order(k, o) for k, o in reversed(list(self.orders.items())))
         return (f"<p>Buy the same GPU from each seller: {stores}</p>"
+                f"<p class=muted>Also: <a href='/desk'>Counterparty Desk spend panel</a> · "
+                f"agents can call <code>POST /api/verify</code></p>"
                 f"<p class=muted>Payments: {e(self.paypal_label)} · Page review: {e(self._ai_label())}</p>"
                 + (rows or "<p class=muted>No orders yet.</p>"))
 
     def _ai_label(self) -> str:
-        return type(self.ai.reviewer).__name__.replace("Reviewer", "") + (
-            " (offline rules, not AI)" if type(self.ai.reviewer).__name__ == "RuleReviewer" else "")
+        name = type(self.ai.reviewer).__name__
+        return {"RuleReviewer": "offline rules (not AI)", "ClaudeReviewer": "Claude"}.get(name, name)
 
     def _order(self, key: str, o: dict) -> str:
         last = o["history"][-1]
@@ -149,7 +225,7 @@ class DemoApp:
                 f"<span class={e(v.decision)}>{e(v.decision.upper())}</span> → {e(outcome)}</h3>"
                 f"<p class=muted>order {e(o['order_id'])} · authorization {e(o['auth_id'])} · "
                 f"authorized {o['authorized']} {e(o['currency'])} · verdict {e(v.id)} · signature {signed}</p>"
-                f"<table><tr><th>check</th><th>result</th><th>source</th><th>detail</th></tr>{checks}</table>"
+                f"<div class=scroll><table><tr><th>check</th><th>result</th><th>source</th><th>detail</th></tr>{checks}</table></div>"
                 f"<ul>{reasons}</ul><p class=muted>timeline: {timeline}<br>{action}</p>{ship}</div>")
 
     def _page(self, title: str, body: str, status: int = 200):
@@ -158,10 +234,10 @@ class DemoApp:
 body{{font:15px/1.5 system-ui,sans-serif;max-width:860px;margin:0 auto;padding:16px;color:#1b1b1f;background:#fafafa}}
 .card{{background:#fff;border:1px solid #ddd;border-radius:10px;padding:14px 16px;margin:14px 0}}
 table{{border-collapse:collapse;width:100%;font-size:14px}}td,th{{border-bottom:1px solid #eee;padding:4px 6px;text-align:left}}
-.muted{{color:#666;font-size:13px}}.price{{font-size:24px;font-weight:600}}
+.muted{{color:#666;font-size:13px;overflow-wrap:anywhere}}.scroll{{overflow-x:auto}}.price{{font-size:24px;font-weight:600}}
 .pass,.approve{{color:#0a7a33;font-weight:600}}.fail,.reject,.bad{{color:#b3261e;font-weight:600}}
 .unknown,.hold{{color:#9a6700;font-weight:600}}
-button,.btn{{background:#0070ba;color:#fff;border:0;border-radius:6px;padding:8px 14px;text-decoration:none;cursor:pointer}}
+button,.btn{{display:inline-block;margin:4px 4px 0 0;background:#0070ba;color:#fff;border:0;border-radius:6px;padding:8px 14px;text-decoration:none;cursor:pointer}}
 </style></head><body><h1>{e(title)}</h1>{body}</body></html>"""
         return status, {"Content-Type": "text/html; charset=utf-8"}, doc.encode()
 
@@ -185,8 +261,11 @@ def serve(app: DemoApp, port: int):
             url = urllib.parse.urlsplit(self.path)
             query = dict(urllib.parse.parse_qsl(url.query))
             length = int(self.headers.get("Content-Length") or 0)
-            form = dict(urllib.parse.parse_qsl(self.rfile.read(length).decode())) if length else {}
-            status, headers, body = app.handle(method, url.path, query, form)
+            raw = self.rfile.read(min(length, MAX_BODY + 1)) if length else b""
+            form = {}
+            if raw and "json" not in (self.headers.get("Content-Type") or ""):
+                form = dict(urllib.parse.parse_qsl(raw.decode(errors="replace")))
+            status, headers, body = app.handle(method, url.path, query, form, raw)
             self.send_response(status)
             for k, v in headers.items():
                 self.send_header(k, v)

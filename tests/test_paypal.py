@@ -58,6 +58,12 @@ class PayPalClientTests(unittest.TestCase):
         self.assertEqual((ctx["return_url"], ctx["cancel_url"]), ("https://x/ok", "https://x/no"))
         self.assertEqual(body["intent"], "AUTHORIZE")
 
+    def test_get_order_is_a_bodyless_get(self):
+        t = Recorder({"id": "O1", "status": "APPROVED"})
+        self.assertEqual(client(t).get_order("O1")["status"], "APPROVED")
+        method, url, _, body = t.api_calls()[0]
+        self.assertEqual((method, url.rsplit("/", 1)[-1], body), ("GET", "O1", None))
+
     def test_approve_link_prefers_payer_action(self):
         order = {"links": [{"rel": "self", "href": "s"}, {"rel": "payer-action", "href": "pa"}]}
         self.assertEqual(approve_link(order), "pa")

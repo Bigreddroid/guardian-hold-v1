@@ -82,8 +82,9 @@ class PayPalClient:
             self._token_expires_at = self.clock() + int(data.get("expires_in", _DEFAULT_TOKEN_TTL)) - _TOKEN_SKEW
         return self._token
 
-    def _call(self, method: str, path: str, payload: Optional[dict] = None, request_id: Optional[str] = None) -> dict:
-        body = json.dumps(payload if payload is not None else {}).encode()
+    def _call(self, method: str, path: str, payload: Optional[dict] = None, request_id: Optional[str] = None,
+              body: bool = True) -> dict:
+        data = json.dumps(payload if payload is not None else {}).encode() if body else None
         request_id = request_id or uuid.uuid4().hex
         for attempt in (1, 2):
             headers = {
@@ -92,7 +93,7 @@ class PayPalClient:
                 "PayPal-Request-Id": request_id,
             }
             try:
-                return self.transport(method, f"{self.base_url}{path}", headers, body)
+                return self.transport(method, f"{self.base_url}{path}", headers, data)
             except PayPalError as exc:
                 if exc.status == 401 and attempt == 1:
                     self._token = None  # revoked or expired early: fetch a new one, retry once
@@ -117,6 +118,9 @@ class PayPalClient:
                 ctx["cancel_url"] = cancel_url
             payload["payment_source"] = {"paypal": {"experience_context": ctx}}
         return self._call("POST", "/v2/checkout/orders", payload)
+
+    def get_order(self, order_id: str) -> dict:
+        return self._call("GET", f"/v2/checkout/orders/{order_id}", payload=None, request_id=None, body=False)
 
     def authorize_order(self, order_id: str) -> dict:
         return self._call("POST", f"/v2/checkout/orders/{order_id}/authorize",

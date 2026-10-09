@@ -16,6 +16,9 @@ class Config:
     paypal_client_id: str
     paypal_client_secret: str
     signing_key: str
+    anthropic_api_key: str = ""
+    telegraph_endpoint: str = ""
+    telegraph_wallet_key: str = ""
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -29,6 +32,9 @@ class Config:
             paypal_client_id=e("PAYPAL_CLIENT_ID", ""),
             paypal_client_secret=e("PAYPAL_CLIENT_SECRET", ""),
             signing_key=_signing_key(e("GUARDIAN_SIGNING_KEY", ""), e("GUARDIAN_ENV", "")),
+            anthropic_api_key=e("ANTHROPIC_API_KEY", ""),
+            telegraph_endpoint=e("TELEGRAPH_ENDPOINT", ""),
+            telegraph_wallet_key=e("TELEGRAPH_WALLET_KEY", ""),
         )
 
 

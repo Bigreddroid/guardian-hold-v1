@@ -36,7 +36,7 @@ class TelegraphChecker:
         result = "pass" if ok is True else "fail" if ok is False else "unknown"
         return CheckResult(
             self.name, result, f"telegraph:{ans.miner}", ans.amount, ans.tx_hash,
-            detail=str(ans.payload.get("detail", "")),
+            detail=str(ans.payload.get("detail", "")), network=ans.network,
         )
 
 

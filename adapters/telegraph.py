@@ -31,23 +31,39 @@ class TelegraphClient:
         self.config = config  # chain_id, token_address, price_source come from here
 
     def buy(self, intent: str, params: dict, max_price: Optional[Decimal] = None) -> TelegraphAnswer:
-        """Must raise PriceAboveCap *before paying* when the 402 quote exceeds max_price."""
+        """Buy one answer. To implement once Season II docs are readable (Nov 1):
+
+        1. POST the request for `intent`; expect HTTP 402 with a price quote (x402).
+        2. If the quote is above `max_price`, raise PriceAboveCap BEFORE paying.
+        3. Sign and pay the quote with the wallet on config.chain_id / config.token_address.
+        4. Retry the request with the payment proof; read the answer and the tx hash.
+        5. Keep at most one request in flight per wallet (Season I apps hit this limit).
+        6. Return TelegraphAnswer with the miner id, amount paid, tx hash and
+           config.network_label, so the spend panel can show all five fields.
+        """
         raise NotImplementedError(
-            "Implement after reading docs.telegraphprotocol.com: signing, paid request, receipt."
+            "Implement after reading docs.telegraphprotocol.com: x402 quote, pay, retry, receipt."
         )
 
 
 class FakeTelegraph:
-    """Test double. `script` maps intent -> payload dict, e.g. {"ok": True}."""
+    """Test double and demo stand-in. `script` maps intent -> payload dict, e.g.
+    {"ok": True}. `prices` optionally maps intent -> price; otherwise `price`."""
 
-    def __init__(self, script: dict, price: Decimal = Decimal("0.01")):
+    label = "simulated Telegraph (no wallet configured)"
+
+    def __init__(self, script: dict, price: Decimal = Decimal("0.01"), prices: Optional[dict] = None,
+                 network: str = "testnet (simulated)"):
         self.script = script
         self.price = price
+        self.prices = prices or {}
+        self.network = network
         self.calls = []
 
     def buy(self, intent: str, params: dict, max_price: Optional[Decimal] = None) -> TelegraphAnswer:
-        if max_price is not None and self.price > max_price:
-            raise PriceAboveCap(f"quote {self.price} above cap {max_price}")
+        price = self.prices.get(intent, self.price)
+        if max_price is not None and price > max_price:
+            raise PriceAboveCap(f"quote {price} above cap {max_price}")
         self.calls.append(intent)
-        return TelegraphAnswer(intent, self.script[intent], "m-test", self.price,
-                               f"0xfake{len(self.calls):04d}", "Sepolia testnet (fake)")
+        return TelegraphAnswer(intent, self.script[intent], "m-sim", price,
+                               f"0xsim{len(self.calls):04d}", self.network)

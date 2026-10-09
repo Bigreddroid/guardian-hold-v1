@@ -25,6 +25,7 @@ class CheckResult:
     cost: Decimal = Decimal("0")
     receipt: Optional[str] = None  # tx hash / receipt id when the check was bought
     detail: str = ""
+    network: str = ""  # chain the receipt lives on, for paid checks
 
 
 @dataclass
@@ -50,6 +51,7 @@ class Verdict:
                     "cost": str(c.cost),
                     "receipt": c.receipt,
                     "detail": c.detail,
+                    "network": c.network,
                 }
                 for c in self.checks
             ],
