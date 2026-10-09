@@ -86,8 +86,44 @@ class DemoFlowTests(unittest.TestCase):
         finally:
             os.environ.clear(); os.environ.update(old)
 
+    def api(self, payload):
+        import json
+        status, headers, body = self.app.handle("POST", "/api/verify", {}, {}, json.dumps(payload).encode())
+        return status, json.loads(body)
+
+    def test_api_verify_rejects_trap_and_approves_clean(self):
+        listing = {"item": "GPU", "listed_price": "500", "seller_email": "a@x.com", "page_text": "boxed"}
+        status, r = self.api({"listing": listing, "checkout": {"amount": "560", "currency": "USD",
+                                                               "payout_email": "a@x.com"}})
+        self.assertEqual((status, r["decision"], r["money_moved"]), (200, "reject", False))
+        status, r = self.api({"listing": listing, "checkout": {"amount": "500", "currency": "USD",
+                                                               "payout_email": "a@x.com"}})
+        self.assertEqual((status, r["decision"]), (200, "approve"))
+
+    def test_api_verify_bad_input_is_400(self):
+        self.assertEqual(self.api({"listing": {}, "checkout": {}})[0], 400)
+        status, _, _ = self.app.handle("POST", "/api/verify", {}, {}, b"not json")
+        self.assertEqual(status, 400)
+        status, _, _ = self.app.handle("POST", "/api/verify", {}, {}, b"[1, 2]")
+        self.assertEqual(status, 400)
+
+    def test_desk_sanctioned_stops_early_and_shows_spend(self):
+        self.app.handle("POST", "/desk/sanctioned", {}, {})
+        v = self.app.desk_runs[-1]["verdict"]
+        self.assertEqual(v.decision, "reject")
+        self.assertEqual([c.name for c in v.checks], ["sanctions_screening_match"])
+        self.assertTrue(v.checks[0].receipt and v.checks[0].network)
+        page = self.app.handle("GET", "/desk", {}, {})[2].decode()
+        self.assertIn("simulated Telegraph", page)
+        self.assertIn("not spent because screening stopped", page)
+
+    def test_desk_clean_within_budget_approves(self):
+        self.app.handle("POST", "/desk/clean", {}, {})
+        v = self.app.desk_runs[-1]["verdict"]
+        self.assertEqual((v.decision, len(v.checks)), ("approve", 4))
+
     def test_pages_render(self):
-        for path in ("/", "/store/honest", "/store/trap", "/store/offsite"):
+        for path in ("/", "/store/honest", "/store/trap", "/store/offsite", "/desk"):
             self.assertEqual(self.app.handle("GET", path, {}, {})[0], 200, path)
         self.assertEqual(self.app.handle("GET", "/healthz", {}, {})[0], 200)
         self.assertEqual(self.app.handle("GET", "/nope", {}, {})[0], 404)

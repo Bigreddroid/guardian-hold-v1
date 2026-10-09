@@ -5,7 +5,7 @@ services:
     name: guardian-hold
     runtime: python
     plan: free
-    buildCommand: python --version
+    buildCommand: pip install -r requirements-ai.txt
     startCommand: python -m demo.app
     healthCheckPath: /healthz
     envVars:
@@ -23,4 +23,16 @@ services:
         sync: false
       # Optional, add at the end: switches page review from offline rules to Claude.
       - key: ANTHROPIC_API_KEY
+        sync: false
+      # Telegraph (Counterparty Desk). Confirm chain after Season II opens on Nov 1:
+      # Base Sepolia = 84532, Ethereum Sepolia = 11155111.
+      - key: CHAIN_ID
+        value: "11155111"
+      - key: NETWORK_LABEL
+        value: Sepolia testnet
+      - key: TOKEN_ADDRESS
+        sync: false
+      - key: TELEGRAPH_ENDPOINT
+        sync: false
+      - key: TELEGRAPH_WALLET_KEY
         sync: false
