@@ -65,6 +65,13 @@ Then check everything with:
 
 `sandbox_smoke` prints two approve links. Log in as your sandbox *Personal* test buyer to approve both; it then captures one and voids the other.
 
+## Measure the page review
+
+    python3 -m scripts.eval_review           # Claude if ANTHROPIC_API_KEY is set
+    python3 -m scripts.eval_review --rules   # offline rules
+
+It runs 12 labelled listing pages from `evals/page_review_cases.json` (3 clean, 7 scams, 2 unclear) and reports how many scams were approved. **The offline rules approve 6 of the 7 scams.** They are a placeholder so the demo runs without a key, not a defence. Run this with Claude before submitting.
+
 ## Deploy on Render
 
 1. Render → New → **Blueprint** → select this repo. `render.yaml` creates the `guardian-hold` web service (free plan) and generates `GUARDIAN_SIGNING_KEY`.
