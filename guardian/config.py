@@ -3,7 +3,18 @@ address and price source are configuration, not code."""
 from __future__ import annotations
 
 import os
+import urllib.parse
 from dataclasses import dataclass
+
+DEV_SIGNING_KEY = "dev-only-change-me"
+_SANDBOX_HOSTS = ("api-m.sandbox.paypal.com", "api.sandbox.paypal.com")
+
+
+def is_paypal_sandbox(url: str) -> bool:
+    """True only for an https URL whose host is PayPal's sandbox API. A substring
+    check would let `https://api-m.paypal.com/?sandbox` through to live money."""
+    parts = urllib.parse.urlsplit(url or "")
+    return parts.scheme == "https" and (parts.hostname or "") in _SANDBOX_HOSTS
 
 
 @dataclass(frozen=True)
@@ -20,9 +31,14 @@ class Config:
     telegraph_endpoint: str = ""
     telegraph_wallet_key: str = ""
 
+    @property
+    def paypal_is_sandbox(self) -> bool:
+        return is_paypal_sandbox(self.paypal_base_url)
+
     @classmethod
-    def from_env(cls) -> "Config":
+    def from_env(cls, require_signing_key: bool = True) -> "Config":
         e = os.environ.get
+        key, env = e("GUARDIAN_SIGNING_KEY", ""), e("GUARDIAN_ENV", "")
         return cls(
             chain_id=int(e("CHAIN_ID", "11155111")),
             network_label=e("NETWORK_LABEL", "Sepolia testnet"),
@@ -31,14 +47,14 @@ class Config:
             paypal_base_url=e("PAYPAL_BASE_URL", "https://api-m.sandbox.paypal.com"),
             paypal_client_id=e("PAYPAL_CLIENT_ID", ""),
             paypal_client_secret=e("PAYPAL_CLIENT_SECRET", ""),
-            signing_key=_signing_key(e("GUARDIAN_SIGNING_KEY", ""), e("GUARDIAN_ENV", "")),
+            signing_key=_signing_key(key, env if require_signing_key else "dev"),
             anthropic_api_key=e("ANTHROPIC_API_KEY", ""),
             telegraph_endpoint=e("TELEGRAPH_ENDPOINT", ""),
             telegraph_wallet_key=e("TELEGRAPH_WALLET_KEY", ""),
         )
 
 
-_PLACEHOLDER_KEYS = {"", "change-me", "dev-only-change-me"}
+_PLACEHOLDER_KEYS = {"", "change-me", DEV_SIGNING_KEY}
 
 
 def _signing_key(key: str, env: str) -> str:
@@ -47,5 +63,5 @@ def _signing_key(key: str, env: str) -> str:
     if key in _PLACEHOLDER_KEYS:
         if env != "dev":
             raise ValueError("set GUARDIAN_SIGNING_KEY (or GUARDIAN_ENV=dev for local runs)")
-        return "dev-only-change-me"
+        return DEV_SIGNING_KEY
     return key

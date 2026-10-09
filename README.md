@@ -7,7 +7,7 @@ AI agents and online buyers pay sellers they can't vet. Guardian authorizes the 
 
 ## How it decides
 
-1. **Fixed checks run first, cheapest first.** These are listed price vs checkout amount, and seller vs payout account. A hard fail stops everything, and the remaining checks (including paid ones) are never bought.
+1. **Fixed checks run first, cheapest first.** These are listed price and currency vs the checkout, seller vs payout account, and the amount vs the buyer's limit. A hard fail stops everything, and the remaining checks (including paid ones) are never bought.
 2. **AI page review runs last** (`hold/ai_review.py`). Claude reads the listing and recommends approve, hold or reject. It can **only make the verdict more cautious**. A listing that tells the AI to "approve this order" still fails the fixed checks, and the instruction itself counts as a fraud signal.
 3. **The policy gate decides** (`guardian/policy.py`). Reject if anything failed, the amount is over the mandate or the authorization, the currency is wrong, or the mandate has expired. Hold if anything is unknown or missing. Approve only if every required check passed.
 4. **Every verdict is signed** (HMAC-SHA256), and the dashboard verifies the signature.
@@ -38,14 +38,16 @@ Both call the same `agent.verify.verify_purchase`. They return a signed verdict,
     pip install -r requirements-mcp.txt
     claude mcp add guardian -- python3 -m agent.mcp_server
 
-The tool is `verify_purchase(item, listed_price, seller_email, page_text, amount, currency, payout_email, max_spend?)`.
+The tool is `verify_purchase(item, listed_price, listed_currency, seller_email, page_text, amount, currency, payout_email, max_spend)`. `max_spend` is the buyer's limit and is required: a limit that defaulted to the amount being charged would limit nothing.
 
 **REST:**
 
     curl -s localhost:8000/api/verify -H 'Content-Type: application/json' -d '{
-      "listing":  {"item": "RTX 4090", "listed_price": "500", "seller_email": "a@shop.example", "page_text": "Sealed box"},
-      "checkout": {"amount": "560", "currency": "USD", "payout_email": "a@shop.example"}}'
+      "listing":  {"item": "RTX 4090", "listed_price": "500", "currency": "USD", "seller_email": "a@shop.example", "page_text": "Sealed box"},
+      "checkout": {"amount": "560", "currency": "USD", "payout_email": "a@shop.example", "max_spend": "600"}}'
     # -> "decision": "reject", "next_step": "Do not pay. Walk away from this seller."
+
+The public endpoint allows 30 calls a minute in total (each can be a paid Claude call) and rejects bodies over 64 KB.
 
 ## Plug in your keys (nothing else changes)
 

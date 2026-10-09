@@ -92,12 +92,13 @@ class DemoFlowTests(unittest.TestCase):
         return status, json.loads(body)
 
     def test_api_verify_rejects_trap_and_approves_clean(self):
-        listing = {"item": "GPU", "listed_price": "500", "seller_email": "a@x.com", "page_text": "boxed"}
+        listing = {"item": "GPU", "listed_price": "500", "currency": "USD", "seller_email": "a@x.com",
+                   "page_text": "boxed"}
         status, r = self.api({"listing": listing, "checkout": {"amount": "560", "currency": "USD",
-                                                               "payout_email": "a@x.com"}})
+                                                               "payout_email": "a@x.com", "max_spend": "600"}})
         self.assertEqual((status, r["decision"], r["money_moved"]), (200, "reject", False))
         status, r = self.api({"listing": listing, "checkout": {"amount": "500", "currency": "USD",
-                                                               "payout_email": "a@x.com"}})
+                                                               "payout_email": "a@x.com", "max_spend": "600"}})
         self.assertEqual((status, r["decision"]), (200, "approve"))
 
     def test_api_verify_bad_input_is_400(self):

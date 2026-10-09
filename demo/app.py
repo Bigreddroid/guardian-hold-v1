@@ -11,6 +11,8 @@ import html
 import itertools
 import json
 import os
+import threading
+import time
 import urllib.parse
 from datetime import date, timedelta
 from decimal import Decimal
@@ -24,13 +26,50 @@ from demo.sim_paypal import SimulatedPayPal
 from desk.flow import DESK_INTENTS, build_desk
 from guardian import Guardian, Mandate, verify
 from guardian.config import Config
-from hold.ai_review import AIPageChecker
+from hold.ai_review import AIPageChecker, default_reviewer
 from hold.flow import HoldFlow, PriceMatchChecker, SellerIdentityChecker, ShipmentChecker
 
 REQUIRED = ("price_match", "seller_identity", "shipment")
 MAX_SPEND = Decimal("600.00")
 MAX_ORDERS = 50  # one shared demo instance: keep memory bounded
 MAX_BODY = 64_000
+API_RATE = (30, 60)  # /api/verify: 30 calls per 60 s across all callers (each may be a paid Claude call)
+
+
+class RateLimiter:
+    """Fixed-window limiter: at most `limit` calls per `window` seconds."""
+
+    def __init__(self, limit: int, window: float, clock=time.monotonic):
+        self.limit, self.window, self.clock = limit, window, clock
+        self.start, self.count = clock(), 0
+        self.lock = threading.Lock()
+
+    def allow(self) -> bool:
+        with self.lock:
+            now = self.clock()
+            if now - self.start >= self.window:
+                self.start, self.count = now, 0
+            if self.count >= self.limit:
+                return False
+            self.count += 1
+            return True
+
+
+def read_body(headers, stream) -> bytes:
+    """Read a request body safely. ValueError on a bad Content-Length (the caller
+    answers 400); OverflowError above MAX_BODY, raised before reading anything (413)."""
+    raw = headers.get("Content-Length")
+    if raw is None:
+        return b""
+    try:
+        length = int(raw)
+    except ValueError:
+        raise ValueError(f"bad Content-Length: {raw!r}") from None
+    if length < 0:
+        raise ValueError(f"bad Content-Length: {raw!r}")
+    if length > MAX_BODY:
+        raise OverflowError(f"body of {length} bytes is over {MAX_BODY}")
+    return stream.read(length)
 DESK_BUDGET = Decimal("0.15")
 DESK_SCENARIOS = {
     "clean": ("Meridian Grain Trading Ltd", {i: {"ok": True} for i in DESK_INTENTS}),
@@ -44,19 +83,22 @@ e = html.escape
 
 
 class DemoApp:
-    def __init__(self, paypal, signing_key: str, base_url: str, reviewer=None, paypal_label: str = ""):
+    def __init__(self, paypal, signing_key: str, base_url: str, reviewer=None, paypal_label: str = "",
+                 limiter: "RateLimiter | None" = None):
         self.paypal = paypal
         self.paypal_label = paypal_label or getattr(paypal, "label", "PayPal sandbox")
         self.signing_key = signing_key
         self.base_url = base_url.rstrip("/")
-        self.ai = AIPageChecker(reviewer)
+        # One reviewer (and one SDK client) shared by the dashboard and the agent API.
+        self.reviewer = reviewer or default_reviewer()
+        self.ai = AIPageChecker(self.reviewer)
+        self.limiter = limiter or RateLimiter(*API_RATE)
         guardian = Guardian([PriceMatchChecker(), SellerIdentityChecker(), ShipmentChecker(), self.ai],
                             signing_key=signing_key)
         self.flow = HoldFlow(guardian, paypal)
         self.orders = {}
         self._keys = itertools.count(1)
         self.desk_runs = []
-        self.reviewer = reviewer
 
     # ---- routing -------------------------------------------------------
     def handle(self, method: str, path: str, query: dict, form: dict, body: bytes = b""):
@@ -126,6 +168,7 @@ class DemoApp:
                           (date.today() + timedelta(days=30)).isoformat(), REQUIRED)
         ctx = {
             "listed_price": s["listed_price"], "checkout_price": s["checkout_price"],
+            "listed_currency": CURRENCY, "checkout_currency": o["currency"],
             "seller_registered_email": s["registered_email"], "seller_payout_email": s["payout_email"],
             "page_text": s["page_text"], "shipment_event": o["shipped"],
         }
@@ -140,10 +183,14 @@ class DemoApp:
             return status, {"Content-Type": "application/json"}, json.dumps(payload, indent=2).encode()
         if len(body) > MAX_BODY:
             return reply(413, {"error": "request body too large"})
+        if not self.limiter.allow():
+            return reply(429, {"error": "rate limit reached, try again in a minute"})
         try:
             req = json.loads(body or b"{}")
             result = verify_purchase(req.get("listing") or {}, req.get("checkout") or {},
                                      reviewer=self.reviewer, signing_key=self.signing_key)
+        except RecursionError:
+            return reply(400, {"error": "JSON nested too deeply"})
         except (ValueError, AttributeError) as exc:
             return reply(400, {"error": str(exc)})
         return reply(200, result)
@@ -156,7 +203,7 @@ class DemoApp:
                           (date.today() + timedelta(days=30)).isoformat(),
                           tuple(i.lower() for i in DESK_INTENTS), check_budget=DESK_BUDGET)
         verdict = build_desk(tg, self.signing_key).run(mandate, {})
-        self.desk_runs.append({"name": name, "verdict": verdict, "label": tg.label})
+        self.desk_runs.append({"name": name, "verdict": verdict, "label": tg.label, "budget": DESK_BUDGET})
         del self.desk_runs[:-MAX_ORDERS]
         return 303, {"Location": "/desk"}, b""
 
@@ -174,10 +221,16 @@ class DemoApp:
                 f"<td><code>{e(c.receipt or '')}</code></td><td>{e(c.network)}</td><td>{e(c.detail)}</td></tr>"
                 for c in v.checks)
             saved = full - v.total_cost
+            if any(c.result == "fail" for c in v.checks):
+                why = "screening stopped at the first hard fail"
+            elif any("check budget" in r for r in v.reasons):
+                why = "the check budget was reached"
+            else:
+                why = "some checks were not bought"
             cards.append(
                 f"<div class=card><h3>{e(run['name'])} · <span class={e(v.decision)}>{e(v.decision.upper())}</span></h3>"
-                f"<p class=muted>{e(run['label'])} · spent {v.total_cost} of {DESK_BUDGET} budget"
-                + (f" · {saved} not spent because screening stopped at the first hard fail" if saved > 0 else "")
+                f"<p class=muted>{e(run['label'])} · spent {v.total_cost} of {run['budget']} budget"
+                + (f" · {saved} not spent because {why}" if saved > 0 else "")
                 + "</p>"
                 f"<div class=scroll><table><tr><th>request</th><th>result</th><th>miner</th><th>amount</th><th>tx hash</th>"
                 f"<th>network</th><th>detail</th></tr>{rows}</table></div>"
@@ -248,7 +301,7 @@ def build_app() -> DemoApp:
     # Render sets RENDER_EXTERNAL_URL; PayPal needs it for the buyer's return link.
     base = os.environ.get("BASE_URL") or os.environ.get("RENDER_EXTERNAL_URL") or f"http://localhost:{port}"
     if cfg.paypal_client_id and cfg.paypal_client_secret:
-        if "sandbox" not in cfg.paypal_base_url:
+        if not cfg.paypal_is_sandbox:
             raise SystemExit("Refusing to run the demo against a non-sandbox PayPal URL.")
         paypal = PayPalClient(cfg.paypal_base_url, cfg.paypal_client_id, cfg.paypal_client_secret)
         return DemoApp(paypal, cfg.signing_key, base, paypal_label="PayPal sandbox")
@@ -260,8 +313,18 @@ def serve(app: DemoApp, port: int):
         def _dispatch(self, method):
             url = urllib.parse.urlsplit(self.path)
             query = dict(urllib.parse.parse_qsl(url.query))
-            length = int(self.headers.get("Content-Length") or 0)
-            raw = self.rfile.read(min(length, MAX_BODY + 1)) if length else b""
+            try:
+                raw = read_body(self.headers, self.rfile)
+            except (ValueError, OverflowError) as exc:
+                code = 413 if isinstance(exc, OverflowError) else 400
+                msg = json.dumps({"error": str(exc)}).encode()
+                self.send_response(code)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(msg)))
+                self.send_header("Connection", "close")
+                self.end_headers()
+                self.wfile.write(msg)
+                return
             form = {}
             if raw and "json" not in (self.headers.get("Content-Type") or ""):
                 form = dict(urllib.parse.parse_qsl(raw.decode(errors="replace")))

@@ -11,6 +11,6 @@
 
 **Agent API:**
 
-    curl -s [RENDER URL]/api/verify -H 'Content-Type: application/json' -d '{"listing":{"item":"GPU","listed_price":"500","seller_email":"a@x.com","page_text":"boxed"},"checkout":{"amount":"560","currency":"USD","payout_email":"a@x.com"}}'
+    curl -s [RENDER URL]/api/verify -H 'Content-Type: application/json' -d '{"listing":{"item":"GPU","listed_price":"500","currency":"USD","seller_email":"a@x.com","page_text":"boxed"},"checkout":{"amount":"560","currency":"USD","payout_email":"a@x.com","max_spend":"600"}}'
 
 **Run it locally instead:** `GUARDIAN_ENV=dev python3 -m demo.app`. No installs are needed. Without keys, every page shows "simulated".

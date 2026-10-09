@@ -23,7 +23,7 @@ from guardian import CheckResult, Mandate
 
 MODEL = "claude-opus-5-5"
 _RESULT = {"approve": "pass", "hold": "unknown", "reject": "fail"}
-MAX_PAGE_CHARS = 60_000
+MAX_PAGE_CHARS = 20_000  # a listing page; also bounds cost per public API call
 
 SYSTEM_PROMPT = """You review a marketplace listing page for a buyer whose payment is \
 authorized but not yet captured. Decide whether the money should be released.
@@ -77,7 +77,7 @@ class ClaudeReviewer:
         )
         response = self.client.beta.messages.create(
             model=self.model,
-            max_tokens=16000,
+            max_tokens=4000,  # a verdict plus a few findings
             system=SYSTEM_PROMPT,
             messages=[{"role": "user", "content": user}],
             output_config={"effort": "medium", "format": {"type": "json_schema", "schema": SCHEMA}},

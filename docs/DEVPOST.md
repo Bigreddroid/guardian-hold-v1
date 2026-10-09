@@ -10,7 +10,7 @@ Marketplace scams don't need to break PayPal. They work by getting the buyer, or
 
 ## What it does
 - The buyer pays with PayPal using **intent AUTHORIZE**. Funds are held, not taken.
-- Guardian runs checks **cheapest first**: listed price vs checkout amount, and listed seller vs payout account. Then an **AI page review** reads the listing.
+- Guardian runs checks **cheapest first**: listed price and currency vs the checkout, listed seller vs payout account, and the amount vs the buyer's limit. Then an **AI page review** reads the listing.
 - A fixed **policy gate** decides:
   - **approve** → capture (only after the seller ships);
   - **reject** → void, so the buyer is never charged;
@@ -26,7 +26,7 @@ Marketplace scams don't need to break PayPal. They work by getting the buyer, or
 - Captures above the authorized amount, or in another currency, are rejected.
 - **Claude** (`claude-opus-5-5`) for the page review, with structured JSON output and refusal fallback. Refusals, timeouts and malformed answers all become **hold**, never approve.
 - The official **MCP Python SDK** for the agent tool.
-- 78 unit tests, including a prompt-injection test and a real MCP client calling the server over stdio. CI on GitHub Actions; deployed on Render.
+- 98 unit tests, including a prompt-injection test and a real MCP client calling the server over stdio. CI on GitHub Actions; Render blueprint included. [Confirm the live URL before submitting.]
 
 ## Challenges
 - **Making the AI useful without trusting it.** The answer was architectural: the AI is one checker among several, runs last, and the gate only lets it lower the outcome.

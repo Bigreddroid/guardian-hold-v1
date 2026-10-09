@@ -13,9 +13,9 @@ from guardian import Verdict, verify
 from hold.ai_review import RuleReviewer
 
 ROOT = os.path.join(os.path.dirname(__file__), "..")
-LISTING = {"item": "RTX 4090", "listed_price": "500.00", "seller_email": "a@x.com",
+LISTING = {"item": "RTX 4090", "listed_price": "500.00", "currency": "USD", "seller_email": "a@x.com",
            "page_text": "Sealed box, PayPal checkout."}
-CHECKOUT = {"amount": "500.00", "currency": "usd", "payout_email": "a@x.com"}
+CHECKOUT = {"amount": "500.00", "currency": "usd", "payout_email": "a@x.com", "max_spend": "600"}
 
 
 def run(listing=LISTING, checkout=CHECKOUT):
@@ -79,8 +79,9 @@ class MCPServerSmokeTest(unittest.TestCase):
                     await s.initialize()
                     names = [t.name for t in (await s.list_tools()).tools]
                     res = await s.call_tool("verify_purchase", {
-                        "item": "GPU", "listed_price": "500", "seller_email": "a@x.com",
-                        "page_text": "boxed", "amount": "560", "currency": "USD", "payout_email": "a@x.com"})
+                        "item": "GPU", "listed_price": "500", "listed_currency": "USD", "seller_email": "a@x.com",
+                        "page_text": "boxed", "amount": "560", "currency": "USD", "payout_email": "a@x.com",
+                        "max_spend": "600"})
                     return names, res
         names, res = asyncio.run(asyncio.wait_for(go(), 60))
         self.assertEqual(names, ["verify_purchase"])

@@ -42,13 +42,15 @@ def _require(d: dict, key: str, where: str):
 
 def verify_purchase(listing: dict, checkout: dict, *, reviewer=None, signing_key: str = "dev",
                     today: Optional[date] = None) -> dict:
-    """listing: item, listed_price, seller_email, page_text
-    checkout: amount, currency, payout_email, optional max_spend (the buyer's limit)"""
+    """listing: item, listed_price, currency, seller_email, page_text
+    checkout: amount, currency, payout_email, max_spend (the buyer's limit; required,
+    because a limit that defaults to the amount being charged limits nothing)"""
     item = str(_require(listing, "item", "listing"))
     listed = _money(_require(listing, "listed_price", "listing"), "listing.listed_price")
+    listed_currency = str(_require(listing, "currency", "listing")).upper()
     amount = _money(_require(checkout, "amount", "checkout"), "checkout.amount")
     currency = str(_require(checkout, "currency", "checkout")).upper()
-    max_spend = _money(checkout.get("max_spend", amount), "checkout.max_spend")
+    max_spend = _money(_require(checkout, "max_spend", "checkout"), "checkout.max_spend")
     today = today or date.today()
 
     mandate = Mandate(f"agent_{uuid.uuid4().hex[:10]}", item, max_spend, currency,
@@ -56,6 +58,8 @@ def verify_purchase(listing: dict, checkout: dict, *, reviewer=None, signing_key
     ctx = {
         "listed_price": listed,
         "checkout_price": amount,
+        "listed_currency": listed_currency,
+        "checkout_currency": currency,
         "seller_registered_email": listing.get("seller_email"),
         "seller_payout_email": checkout.get("payout_email"),
         "page_text": listing.get("page_text"),

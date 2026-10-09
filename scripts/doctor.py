@@ -7,7 +7,7 @@ from __future__ import annotations
 import sys
 
 from adapters.paypal import PayPalClient, PayPalError
-from guardian.config import Config
+from guardian.config import DEV_SIGNING_KEY, Config
 
 ON, SIM, BAD = "ON", "SIMULATED", "PROBLEM"
 SEPOLIA, BASE_SEPOLIA = 11155111, 84532
@@ -17,7 +17,7 @@ def report(cfg: Config, paypal_factory=PayPalClient) -> list:
     rows = []
 
     if cfg.paypal_client_id and cfg.paypal_client_secret:
-        if "sandbox" not in cfg.paypal_base_url:
+        if not cfg.paypal_is_sandbox:
             rows.append(("PayPal", BAD, f"{cfg.paypal_base_url} is not the sandbox; refusing live money"))
         else:
             try:
@@ -28,6 +28,8 @@ def report(cfg: Config, paypal_factory=PayPalClient) -> list:
                 rows.append(("PayPal", BAD, f"sandbox rejected the credentials: {exc}"))
             except OSError as exc:
                 rows.append(("PayPal", BAD, f"could not reach {cfg.paypal_base_url}: {exc}"))
+            except (ValueError, KeyError) as exc:
+                rows.append(("PayPal", BAD, f"unexpected token response from {cfg.paypal_base_url}: {exc!r}"))
     elif cfg.paypal_client_id or cfg.paypal_client_secret:
         rows.append(("PayPal", BAD, "set both PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET"))
     else:
@@ -42,7 +44,7 @@ def report(cfg: Config, paypal_factory=PayPalClient) -> list:
     else:
         rows.append(("Page review", SIM, "offline rules, labelled 'not AI'"))
 
-    if cfg.signing_key == "dev-only-change-me":
+    if cfg.signing_key == DEV_SIGNING_KEY:
         rows.append(("Signing key", SIM, "dev placeholder (GUARDIAN_ENV=dev); set GUARDIAN_SIGNING_KEY for deploys"))
     else:
         rows.append(("Signing key", ON, "set"))
