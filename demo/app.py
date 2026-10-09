@@ -252,7 +252,16 @@ class DemoApp:
     def _dashboard(self) -> str:
         stores = "".join(f"<a class=btn href='/store/{k}'>{e(v['name'])}</a> " for k, v in SELLERS.items())
         rows = "".join(self._order(k, o) for k, o in reversed(list(self.orders.items())))
-        return (f"<p>Buy the same GPU from each seller: {stores}</p>"
+        guide = ("<div class='card guide'><b>Test it in 60 seconds</b><ol>"
+                 "<li><b>GPU Deals Direct</b> → Buy with PayPal. Expect <span class=reject>REJECT</span>, "
+                 "voided: it charges $560 for a $500 listing.</li>"
+                 "<li><b>QuickShip GPUs</b> → Buy with PayPal. Expect <span class=reject>REJECT</span>, "
+                 "voided by the page review only: price and payout look fine.</li>"
+                 "<li><b>Nimbus Hardware</b> → Buy with PayPal → <i>Seller marks shipped</i>. Expect "
+                 "<span class=hold>HOLD</span>, then <span class=approve>APPROVE</span> and captured.</li>"
+                 "</ol><span class=muted>Money is only authorized at checkout. Guardian decides whether "
+                 "PayPal captures it.</span></div>")
+        return (guide + f"<p>Buy the same GPU from each seller: {stores}</p>"
                 f"<p class=muted>Also: <a href='/desk'>Counterparty Desk spend panel</a> · "
                 f"agents can call <code>POST /api/verify</code></p>"
                 f"<p class=muted>Payments: {e(self.paypal_label)} · Page review: {e(self._ai_label())}</p>"
@@ -287,7 +296,7 @@ class DemoApp:
 body{{font:15px/1.5 system-ui,sans-serif;max-width:860px;margin:0 auto;padding:16px;color:#1b1b1f;background:#fafafa}}
 .card{{background:#fff;border:1px solid #ddd;border-radius:10px;padding:14px 16px;margin:14px 0}}
 table{{border-collapse:collapse;width:100%;font-size:14px}}td,th{{border-bottom:1px solid #eee;padding:4px 6px;text-align:left}}
-.muted{{color:#666;font-size:13px;overflow-wrap:anywhere}}.scroll{{overflow-x:auto}}.price{{font-size:24px;font-weight:600}}
+.muted{{color:#666;font-size:13px;overflow-wrap:anywhere}}.scroll{{overflow-x:auto}}.guide{{border-color:#0070ba}}.guide ol{{margin:6px 0;padding-left:20px}}.price{{font-size:24px;font-weight:600}}
 .pass,.approve{{color:#0a7a33;font-weight:600}}.fail,.reject,.bad{{color:#b3261e;font-weight:600}}
 .unknown,.hold{{color:#9a6700;font-weight:600}}
 button,.btn{{display:inline-block;margin:4px 4px 0 0;background:#0070ba;color:#fff;border:0;border-radius:6px;padding:8px 14px;text-decoration:none;cursor:pointer}}
