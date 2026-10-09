@@ -1,0 +1,26 @@
+# Render Blueprint: New > Blueprint > pick this repo.
+# No build step: the demo uses only the Python standard library.
+services:
+  - type: web
+    name: guardian-hold
+    runtime: python
+    plan: free
+    buildCommand: python --version
+    startCommand: python -m demo.app
+    healthCheckPath: /healthz
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.7
+      - key: GUARDIAN_SIGNING_KEY
+        generateValue: true
+      - key: PAYPAL_BASE_URL
+        value: https://api-m.sandbox.paypal.com
+      # Set these two in the Render dashboard (never commit them).
+      # Leave them empty to run the labelled in-memory PayPal simulation.
+      - key: PAYPAL_CLIENT_ID
+        sync: false
+      - key: PAYPAL_CLIENT_SECRET
+        sync: false
+      # Optional, add at the end: switches page review from offline rules to Claude.
+      - key: ANTHROPIC_API_KEY
+        sync: false
